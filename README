@@ -1,0 +1,3 @@
+This project contains a script for parsing collectl logs collected on
+MSI machines and producing SQL statements for loading the relevant
+data into the MSI software accounting database.
