@@ -83,7 +83,7 @@ class CollectlExecutor:
     stderr_stream.close()
 
     if return_code != 0:
-      raise RuntimeError("collectl did not return a status code of 1")
+      raise RuntimeError("collectl did not return a status code of 0")
 
   def output_file(self):
     return self.collectl_output_file[1]

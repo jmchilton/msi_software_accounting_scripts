@@ -1,0 +1,86 @@
+lmstat - Copyright (c) 1989-2004 by Macrovision Corporation. All rights reserved.
+Flexible License Manager status on Thu 9/22/2011 08:34
+
+License server status: 1716@goose.msi.umn.edu
+    License file(s) on goose.msi.umn.edu: /opt/local/flexlm/license/license.dat:
+
+goose.msi.umn.edu: license server UP (MASTER) v11.7
+
+Vendor daemon status (on goose.msi.umn.edu):
+
+ chemcompd: UP v9.5
+    sgiawd: UP v9.5
+  LMCOMSOL: UP v11.5
+ toolworks: UP v10.8
+   pam_lmd: The desired vendor daemon is down (-97,29)
+    SCHROD: UP v11.7
+       msi: UP v10.8
+  triposlm: UP v10.8
+  reaction: UP v10.1
+ idl_lmgrd: UP v10.8
+   RICARDO: UP v9.2
+  FluentLm: UP v10.8
+  ansyslmd: UP v10.8
+    mcslmd: UP v10.8
+   pgroupd: UP v11.7
+     INTEL: UP v9.2
+      PWID: UP v11.6
+      VRCO: UP v9.2
+   ansoftd: UP v10.8
+     cdlmd: UP v11.7
+    jacket: UP v11.8
+
+Feature usage info:
+
+Users of moe:  (Total of 6 licenses issued;  Total of 3 licenses in use)
+
+  "moe" v2011.12, vendor: chemcompd
+  floating license
+
+    chilton vl5 /dev/pts/2 (v2010.10) (goose.msi.umn.edu/1716 117), start Wed 9/14 15:36, 3 licenses
+
+Users of MayaUnltdf:  (Total of 2 licenses issued;  Total of 0 licenses in use)
+
+Users of MayaFluidSimf:  (Total of 2 licenses issued;  Total of 0 licenses in use)
+
+Users of MayaMRFMUnlimitedf:  (Total of 2 licenses issued;  Total of 0 licenses in use)
+
+Users of GLIDE_MAIN:  (Total of 36 licenses issued;  Total of 2 licenses in use)
+
+  "GLIDE_MAIN" v99, vendor: SCHROD
+  nodelocked license locked to NOTHING (hostid=ANY)
+
+    foo vl2 (v56) (goose.msi.umn.edu/1716 7629), start Fri 9/2 10:32
+    foo vl2 (v56) (goose.msi.umn.edu/1716 1614), start Thu 9/22 5:54
+
+Users of GLIDE_XP_DESC:  (Total of 36 licenses issued;  Total of 2 licenses in use)
+
+  "GLIDE_XP_DESC" v99, vendor: SCHROD
+  nodelocked license locked to NOTHING (hostid=ANY)
+
+    foo vl2 (v56) (goose.msi.umn.edu/1716 359), start Fri 9/2 10:32
+    foo vl2 (v56) (goose.msi.umn.edu/1716 243), start Thu 9/22 5:54
+
+----------------------------------------------------------------------------
+License server status: 1719@goose.msi.umn.edu                               
+    License file(s) on goose.msi.umn.edu: /opt/local/flexlm/license/abaqus_license.dat:
+
+goose.msi.umn.edu: license server UP (MASTER) v10.8
+
+Vendor daemon status (on goose.msi.umn.edu):
+
+  ABAQUSLM: UP v10.8
+
+Feature usage info:
+
+Users of abaqus:  (Total of 48 licenses issued;  Total of 21 licenses in use)
+
+  "abaqus" v61.1, vendor: ABAQUSLM
+  floating license                
+
+    bar1 elmo06 /dev/tty (v61.1) (goose.msi.umn.edu/1719 1001), start Wed 9/21 15:38, 5 licenses
+    bar2 elmob016 /dev/tty (v61.1) (goose.msi.umn.edu/1719 101), start Wed 9/21 15:38, 8 licenses
+    bar2 elmob049 /dev/tty (v61.1) (goose.msi.umn.edu/1719 701), start Wed 9/21 15:38, 8 licenses
+
+Users of ams:  (Total of 1 license issued;  Total of 0 licenses in use)
+
