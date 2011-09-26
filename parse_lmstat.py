@@ -49,10 +49,16 @@ class LmstatUserSnapshot:
     self.host = host
     self.licenses = licenses
 
+  def dump_sql(self, stream):
+    insert_prefix = '''INSERT INTO raw_flexlm_user_snapshots (flexlm_app_snapshot_id, username, host, licenses) VALUES (currval('raw_flexlm_app_snapshots_id_seq'), '''
+    insert_suffix = ");"
+    print >> stream, "%s'%s', '%s', %d%s" % (insert_prefix, self.username, self.host, self.licenses, insert_suffix)
+
 class LmstatAppSnapshot:
   
   def add_user_snapshot(self, line):
     match = re.search("    (\w+)\s+(\w+).*", line)
+
     num_licenses = 1
     num_match = re.search("(\d+) licenses", line)
     if num_match is not None:
@@ -60,7 +66,16 @@ class LmstatAppSnapshot:
 
     self.user_snapshots.append(LmstatUserSnapshot(match.group(1), match.group(2), num_licenses))
 
+  def dump_sql(self, stream = sys.stdout):
+    insert_prefix = "INSERT INTO raw_flexlm_app_snapshots (for_date, feature, vendor, total_licenses, used_licenses) VALUES ("
+    insert_suffix = ");"
+    print >> stream, "%s'%s', '%s', '%s', %d, %d%s" % (insert_prefix, to_postgres_date(self.datetime), self.feature, self.vendor, self.total_licenses, self.used_licenses, insert_suffix)
+
+    for user_snapshot in self.user_snapshots:
+      user_snapshot.dump_sql(stream)
+
   def __init__(self, datetime, lines, parse_from):
+    self.datetime = datetime
     first_line = lines[parse_from]
     match = re.search('Users of (.*): .*(\d+) license.*(\d+) license', first_line)
     self.feature = match.group(1)
@@ -90,7 +105,7 @@ class LmstatParser:
   >>> parser = LmstatParser()
   >>> parser.executor = TestLmstatExecutor()
   >>> parser.parse()
-  >>> parser.datetime
+  >>> to_postgres_date(parser.datetime)
   '2011-09-22 08:34:00'
   >>> first_snapshot = parser.app_snapshots[0]
   >>> first_snapshot.feature
@@ -101,6 +116,14 @@ class LmstatParser:
   3
   >>> first_snapshot.vendor
   'chemcompd'
+  >>> import StringIO
+  >>> output = StringIO.StringIO()
+  >>> first_snapshot.dump_sql(output)
+  >>> sql = output.getvalue()
+  >>> sql.find('INSERT INTO raw_flexlm_app_snapshots (for_date, feature, vendor, total_licenses, used_licenses) VALUES ') > -1
+  True
+  >>> sql.find('''VALUES ('2011-09-22 08:34:00', 'moe', 'chemcompd', 6, 3);''') > -1
+  True
   >>> first_user_snapshot = first_snapshot.user_snapshots[0]
   >>> first_user_snapshot.username
   'chilton'
@@ -108,6 +131,10 @@ class LmstatParser:
   'vl5'
   >>> first_user_snapshot.licenses
   3
+  >>> sql.find('INSERT INTO raw_flexlm_user_snapshots (flexlm_app_snapshot_id, username, host, licenses) VALUES ') > -1
+  True
+  >>> sql.find('''VALUES (currval('raw_flexlm_app_snapshots_id_seq'), 'chilton', 'vl5', 3);''') > -1
+  True
   """
 
   def __init__(self):
@@ -117,7 +144,7 @@ class LmstatParser:
     output = self.executor.execute()
     
     datetime_match = re.search("Flexible License Manager status on \w+ ([\d/]+\s+[\d\:]+)\s*", output)
-    self.datetime = to_postgres_date(time.strptime(datetime_match.group(1), '%m/%d/%Y %H:%M'))
+    self.datetime = time.strptime(datetime_match.group(1), '%m/%d/%Y %H:%M')
 
     lines = [line for line in output.split("\n") if re.match("$\s*^", line) is None]
     start_indicies = [index for (str, index) in zip(lines, range(len(lines))) if str.find('Users of') == 0]
