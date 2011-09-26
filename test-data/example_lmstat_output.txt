@@ -32,12 +32,12 @@ Vendor daemon status (on goose.msi.umn.edu):
 
 Feature usage info:
 
-Users of moe:  (Total of 6 licenses issued;  Total of 3 licenses in use)
+Users of moe:  (Total of 26 licenses issued;  Total of 13 licenses in use)
 
   "moe" v2011.12, vendor: chemcompd
   floating license
 
-    chilton vl5 /dev/pts/2 (v2010.10) (goose.msi.umn.edu/1716 117), start Wed 9/14 15:36, 3 licenses
+    chilton vl5 /dev/pts/2 (v2010.10) (goose.msi.umn.edu/1716 117), start Wed 9/14 15:36, 13 licenses
 
 Users of MayaUnltdf:  (Total of 2 licenses issued;  Total of 0 licenses in use)
 
@@ -81,6 +81,8 @@ Users of abaqus:  (Total of 48 licenses issued;  Total of 21 licenses in use)
     bar1 elmo06 /dev/tty (v61.1) (goose.msi.umn.edu/1719 1001), start Wed 9/21 15:38, 5 licenses
     bar2 elmob016 /dev/tty (v61.1) (goose.msi.umn.edu/1719 101), start Wed 9/21 15:38, 8 licenses
     bar2 elmob049 /dev/tty (v61.1) (goose.msi.umn.edu/1719 701), start Wed 9/21 15:38, 8 licenses
+
+Users of SERIAL:  (Uncounted, node-locked)
 
 Users of ams:  (Total of 1 license issued;  Total of 0 licenses in use)
 

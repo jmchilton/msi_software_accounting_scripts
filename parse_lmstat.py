@@ -33,6 +33,7 @@ class TestLmstatExecutor:
 class LmstatExecutor:
 
   def execute(self):
+    command_line = 'lmstat -a'
     output_file = tempfile.mkstemp()
     stdout_fileno = output_file[0]
     proc = subprocess.Popen(command_line, shell=True, stdout=stdout_fileno)
@@ -67,6 +68,9 @@ class LmstatAppSnapshot:
     self.user_snapshots.append(LmstatUserSnapshot(match.group(1), match.group(2), num_licenses))
 
   def dump_sql(self, stream = sys.stdout):
+    if self.uncounted:
+      return
+      
     insert_prefix = "INSERT INTO raw_flexlm_app_snapshots (for_date, feature, vendor, total_licenses, used_licenses) VALUES ("
     insert_suffix = ");"
     print >> stream, "%s'%s', '%s', '%s', %d, %d%s" % (insert_prefix, to_postgres_date(self.datetime), self.feature, self.vendor, self.total_licenses, self.used_licenses, insert_suffix)
@@ -77,11 +81,25 @@ class LmstatAppSnapshot:
   def __init__(self, datetime, lines, parse_from):
     self.datetime = datetime
     first_line = lines[parse_from]
-    match = re.search('Users of (.*): .*(\d+) license.*(\d+) license', first_line)
+    
+    uncounted_match = re.search('Users of (.*):.*(Uncounted|Cannot get users)', first_line)
+    if uncounted_match is not None:
+      self.uncounted = True
+      return
+
+    self.uncounted = False
+
+
+    match = re.search('Users of (.*):.*Total of (\d+) licenses? issued.*Total of (\d+) licenses? in use.*', first_line)
+
+    if match is None:
+      raise RuntimeError("Failed to match first line application pattern to [%s]" % first_line)
     self.feature = match.group(1)
     self.total_licenses = int(match.group(2))
     self.used_licenses = int(match.group(3))
-    
+    self.user_snapshots = []
+    self.vendor = ''
+
     if self.used_licenses == 0:
       return
     
@@ -111,9 +129,9 @@ class LmstatParser:
   >>> first_snapshot.feature
   'moe'
   >>> first_snapshot.total_licenses
-  6
+  26
   >>> first_snapshot.used_licenses
-  3
+  13
   >>> first_snapshot.vendor
   'chemcompd'
   >>> import StringIO
@@ -122,7 +140,7 @@ class LmstatParser:
   >>> sql = output.getvalue()
   >>> sql.find('INSERT INTO raw_flexlm_app_snapshots (for_date, feature, vendor, total_licenses, used_licenses) VALUES ') > -1
   True
-  >>> sql.find('''VALUES ('2011-09-22 08:34:00', 'moe', 'chemcompd', 6, 3);''') > -1
+  >>> sql.find('''VALUES ('2011-09-22 08:34:00', 'moe', 'chemcompd', 26, 13);''') > -1
   True
   >>> first_user_snapshot = first_snapshot.user_snapshots[0]
   >>> first_user_snapshot.username
@@ -130,10 +148,12 @@ class LmstatParser:
   >>> first_user_snapshot.host
   'vl5'
   >>> first_user_snapshot.licenses
-  3
+  13
   >>> sql.find('INSERT INTO raw_flexlm_user_snapshots (flexlm_app_snapshot_id, username, host, licenses) VALUES ') > -1
   True
-  >>> sql.find('''VALUES (currval('raw_flexlm_app_snapshots_id_seq'), 'chilton', 'vl5', 3);''') > -1
+  >>> sql.find('''VALUES (currval('raw_flexlm_app_snapshots_id_seq'), 'chilton', 'vl5', 13);''') > -1
+  True
+  >>> sql.find('SERIAL') == -1
   True
   """
 
@@ -147,6 +167,7 @@ class LmstatParser:
     self.datetime = time.strptime(datetime_match.group(1), '%m/%d/%Y %H:%M')
 
     lines = [line for line in output.split("\n") if re.match("$\s*^", line) is None]
+
     start_indicies = [index for (str, index) in zip(lines, range(len(lines))) if str.find('Users of') == 0]
 
     app_snapshots = []
@@ -155,11 +176,17 @@ class LmstatParser:
 
     self.app_snapshots = app_snapshots
 
+  def dump_sql(self, stream = sys.stdout):
+    for app_snapshot in self.app_snapshots:
+      app_snapshot.dump_sql(stream)
+
 def main():
   from optparse import OptionParser
   parser = OptionParser()
   (options, args) = parser.parse_args()
-  LmstatParser().parse()
+  lmstat_parser = LmstatParser()
+  lmstat_parser.parse()
+  lmstat_parser.dump_sql()
 
   
 if __name__ == "__main__":
