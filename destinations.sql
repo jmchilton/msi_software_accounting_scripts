@@ -12,3 +12,13 @@ create table raw_flexlm_user_snapshots (id integer DEFAULT nextval('raw_flexlm_u
                                         host varchar(30));
                                         
 currval('raw_flexlm_app_snapshots_id_seq')
+
+
+create sequence raw_collectl_executions_id_seq;
+create table raw_collectl_executions(id integer DEFAULT nextval('raw_flexlm_user_snapshots_id_seq'::regclass) PRIMARY KEY,
+                                     START_TIME timestamp with time zone, 
+                                     END_TIME timestamp with time zone,
+                                     PID integer,
+                                     UID integer,
+                                     EXECUTABLE varchar(200),
+                                     HOST varchar(30));
