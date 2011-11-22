@@ -134,6 +134,13 @@ class CollectlSummary:
   2
   >>> executions['22734 31062 /bin/ls'][5]
   3
+  >>> empty_temp_file = tempfile.NamedTemporaryFile()
+  >>> empty_temp_file.write("No records")
+  >>> empty_temp_file.flush()
+  >>> parser = CollectlSummary(empty_temp_file.name)
+  >>> execution_values = parser.build()
+  >>> len(execution_values)
+  0
   """
 
   def __init__(self, collectl_output):
@@ -152,8 +159,12 @@ class CollectlSummary:
     self.raw_executions = {}
     with open(self.collectl_output, 'r') as file:
       for line in file:
-        self.register_date_time(CollectlSummary.add_line(line, self.raw_executions))
+        if self.__valid_line(line):
+          self.register_date_time(CollectlSummary.add_line(line, self.raw_executions))
     return self.get_executions().values()
+
+  def __valid_line(self, line):
+    return re.match("\d{8} \d\d:\d\d:\d\d", line) is not None
 
   def get_executions(self):
     executions = self.raw_executions
