@@ -11,12 +11,11 @@ import Queue
 
 # ~/parse_collectl.py  --directory /project/collectl/itasca --host_prefix itasca --log_directory /home/it1/chilton/logs --batch_size 100
 
-def touch(file_name):
-  parent_directory = os.path.dirname(file_name)
-  if not os.path.exists(parent_directory):
-    os.makedirs(parent_directory)
-  with file(file_name, 'a'):
-    os.utime(file_name, None)
+# regexp to match executables we don't care about and which shouldn't be recorded (mostly system tools). 
+BLACKLIST = "^(sshd:|/bin/.*|python|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh)$"
+
+def filter_executable(executable):
+  return re.match(BLACKLIST, executable) is not None
 
 def to_postgres_date(time_object):
   """
@@ -71,14 +70,22 @@ class CollectlExecutor:
   >>> contents.strip()
   'Hello World'
   """
-  def __init__(self, rawp_file, stderr_file):
+  def __init__(self, rawp_file, stderr_file = None):
     self.rawp_file = rawp_file
-    self.stderr_file = stderr_file
+    if stderr_file is not None:
+      self.stderr_file = stderr_file
+      self.stderr_temp = False
+    else:
+      self.stderr_file = tempfile.mkstemp()[1]
+      self.stderr_temp = True
+
     self.collectl_output_file = tempfile.mkstemp()
     self.collectl_command_line_builder = CollectlCommandLineBuilder()
 
   def __del__(self):
     os.remove(self.output_file())
+    if self.stderr_temp:
+      os.remove(self.error_file())
 
   def execute_collectl(self):
     command_line = self.collectl_command_line_builder.get(self.rawp_file)
@@ -90,7 +97,8 @@ class CollectlExecutor:
     stderr_stream.close()
 
     if return_code != 0:
-      raise RuntimeError("collectl did not return a status code of 0")
+      stderr_contents = open(self.stderr_file, 'r').read()
+      raise RuntimeError("collectl did not return a status code of 0, process standard error was %s" % stderr_contents)
 
   def output_file(self):
     return self.collectl_output_file[1]
@@ -100,11 +108,11 @@ class CollectlExecutor:
 
 class TestCollectlData:
   line1 = "#Test Line"
-  line2 = "20110818 00:02:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
-  line3 = "20110818 00:04:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
-  line4 = "20110818 00:04:00 22737 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /bin/cat"
-  line5 = "20110818 00:05:00 22737 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /bin/cat"
-  line6 = "20110818 00:06:00 22734 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /bin/ls"
+  line2 = "20110818 00:02:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
+  line3 = "20110818 00:04:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
+  line4 = "20110818 00:04:00 22737 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/cat"
+  line5 = "20110818 00:05:00 22737 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/cat"
+  line6 = "20110818 00:06:00 22734 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/ls"
 
   @staticmethod
   def make_temp_file():
@@ -130,11 +138,11 @@ class CollectlSummary:
   >>> to_postgres_date(parser.last_date_time)
   '2011-08-18 00:06:00'
   >>> executions = parser.get_executions()
-  >>> executions['22737 31062 /bin/cat'][5]
+  >>> executions['22737 31062 /opt/bin/cat'][5]
   0
-  >>> executions['22733 31062 /bin/bash'][5]
+  >>> executions['22733 31062 /opt/bin/bash'][5]
   2
-  >>> executions['22734 31062 /bin/ls'][5]
+  >>> executions['22734 31062 /opt/bin/ls'][5]
   3
   >>> empty_temp_file = tempfile.NamedTemporaryFile()
   >>> empty_temp_file.write("No records")
@@ -206,19 +214,19 @@ class CollectlSummary:
     '2011-08-18 00:05:00'
     >>> to_postgres_date(CollectlSummary.add_line(TestCollectlData.line6, executions))
     '2011-08-18 00:06:00'
-    >>> to_postgres_date(executions["22733 31062 /bin/bash"][0])
+    >>> to_postgres_date(executions["22733 31062 /opt/bin/bash"][0])
     '2011-08-18 00:02:00'
-    >>> to_postgres_date(executions["22733 31062 /bin/bash"][1])
+    >>> to_postgres_date(executions["22733 31062 /opt/bin/bash"][1])
     '2011-08-18 00:04:00'
-    >>> executions["22733 31062 /bin/bash"][2]
+    >>> executions["22733 31062 /opt/bin/bash"][2]
     '22733'
-    >>> executions["22733 31062 /bin/bash"][3]
+    >>> executions["22733 31062 /opt/bin/bash"][3]
     '31062'
-    >>> executions["22733 31062 /bin/bash"][4]
-    '/bin/bash'
-    >>> to_postgres_date(executions["22734 31062 /bin/ls"][0])
+    >>> executions["22733 31062 /opt/bin/bash"][4]
+    '/opt/bin/bash'
+    >>> to_postgres_date(executions["22734 31062 /opt/bin/ls"][0])
     '2011-08-18 00:06:00'
-    >>> to_postgres_date(executions["22734 31062 /bin/ls"][1])
+    >>> to_postgres_date(executions["22734 31062 /opt/bin/ls"][1])
     '2011-08-18 00:06:00'
     """
 
@@ -231,6 +239,10 @@ class CollectlSummary:
     pid = parsed_line[1]
     uid = parsed_line[2]
     executable = parsed_line[3]
+    if filter_executable(executable):
+      return None
+    if re.match('^(\d+|-bash)$', executable) is not None:
+      print "Bad line found [%s]" % line
     unique_index = "%s %s %s" % (pid, uid, executable)
     if executions.has_key(unique_index):
       execution = executions.get(unique_index)
@@ -245,7 +257,7 @@ class CollectlSummary:
   def parse_line(line):
     """
     
-    >>> parts = CollectlSummary.parse_line("20110818 00:02:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC")
+    >>> parts = CollectlSummary.parse_line("20110818 00:02:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC")
     >>> to_postgres_date(parts[0])
     '2011-08-18 00:02:00'
     >>> parts[1].strip()
@@ -253,11 +265,20 @@ class CollectlSummary:
     >>> parts[2].strip()
     '31062'
     >>> parts[3].strip()
-    '/bin/bash'
+    '/opt/bin/bash'
+    >>> parts = CollectlSummary.parse_line("20110925 16:01:00 10951 11257 20 7456 0 R 615788 100532 507020 536368 5468 2356 4180 1 1.16 58.05 98   1165:21 0 0 0 0 0 0 0 0 13K ./mpcugles              ")
+    >>> parts[3].strip()
+    './mpcugles'
     """    
-    line_parts = line.split(' ', 29)
-    time_str = "%s %s" % (line_parts[0], line_parts[1]) 
-    return (CollectlSummary.parse_timestamp(time_str), line_parts[2], line_parts[3], CollectlSummary.parse_program(line_parts[29]))
+    
+    
+    first_line_parts = line.split(' ', 19)
+    time_str = "%s %s" % (first_line_parts[0], first_line_parts[1]) 
+    rest_line = first_line_parts[19]
+    rest_line = rest_line.strip()
+    rest_line_parts = rest_line.split(' ', 10)
+    #print "rest_line is [%s]" % rest_line
+    return (CollectlSummary.parse_timestamp(time_str), first_line_parts[2], first_line_parts[3], CollectlSummary.parse_program(rest_line_parts[10]))
 
   @staticmethod
   def parse_timestamp(date_str):
@@ -292,11 +313,12 @@ class MockCollectlSummaryFactory:
 
 class BaseCollectlSqlDumper:
 
-  def dump(self, executions, host):
+  def dump(self, executions, host, file):
     statements = []
     for execution in executions:
       for statement in self.get_statements_for_execution(execution, host):
         statements.append(statement)
+    statements.append("INSERT INTO PROCESSED_COLLECTL_LOGS (NAME) VALUES ('%s');" % escape_quotes(file))
     self.handle_statements(statements)
 
   def get_statements_for_execution(self, execution, host):
@@ -336,10 +358,10 @@ class BaseCollectlSqlDumper:
   @staticmethod
   def same_execution_condition(execution, host):
     """
-    >>> execution = [CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/bin/cat', True]
+    >>> execution = [CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/opt/bin/cat', True]
     >>> condition = BaseCollectlSqlDumper.same_execution_condition(execution, 'itasca0001')
     >>> condition
-    "HOST = 'itasca0001' AND PID = '123' AND UID = '456' AND EXECUTABLE = '/bin/cat' AND START_TIME > '2011-08-04 00:02:00' AND END_TIME < '2011-09-01 00:04:00'"
+    "HOST = 'itasca0001' AND PID = '123' AND UID = '456' AND EXECUTABLE = '/opt/bin/cat' AND START_TIME > '2011-08-04 00:02:00' AND END_TIME < '2011-09-01 00:04:00'"
     """
     start = execution[0]
     end = execution[1]
@@ -354,34 +376,37 @@ class BaseCollectlSqlDumper:
     condition = same_execution_condition_template % (host, pid, uid, executable, to_postgres_date(start_datetime - one_week), to_postgres_date(end_datetime + one_week))
     return condition
 
-class PostgresCollectlSqlDumper(BaseCollectlSqlDumper):
-  
-  def __get_database_connection(self, options):
+class PostgresConnectionFactory:
+  def __init__(self, options):
+    self.options = options
+
+  def get_database_connection(self):
     import psycopg2
+    options = self.options
     return psycopg2.connect(database=options.pg_database, user=options.pg_username, password=options.pg_password, host=options.pg_host, port=options.pg_port)
 
+class PostgresCollectlSqlDumper(BaseCollectlSqlDumper):
+  
   def __init__(self, options):
-    self.connection = self.__get_database_connection(options)
+    self.postgres_connection_factory = PostgresConnectionFactory(options)
         
   def handle_statements(self, statements):
-    cursor = self.connection.cursor()
+    connection = self.postgres_connection_factory.get_database_connection()
+    cursor = connection.cursor()
     for statement in statements:
       cursor.execute(statement)
     cursor.close()
-    self.connection.commit()
-
+    connection.commit()
 
 class StreamCollectlSqlDumper(BaseCollectlSqlDumper):
   
   """
   >>> import StringIO
-  >>> def dump(e): output = StringIO.StringIO(); sql_dumper = StreamCollectlSqlDumper(output); sql_dumper.dump(e, 'itasca0001'); return output.getvalue()
-  >>> output = dump([(CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/bin/cat', 0)])
-  >>> output.strip() #doctest: +NORMALIZE_WHITESPACE
-  "INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) VALUES ('2011-08-18 00:02:00', '2011-08-18 00:04:00', 123, 456, '/bin/cat', 'itasca0001');"
-  >>> execution = [CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/bin/cat', 1]
+  >>> def dump(e): output = StringIO.StringIO(); sql_dumper = StreamCollectlSqlDumper(output); sql_dumper.dump(e, 'itasca0001', '/path/to/file'); return output.getvalue()
+  >>> output = dump([(CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/opt/bin/cat', 0)])
+  >>> execution = [CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/opt/bin/cat', 1]
   >>> output = dump([execution])
-  >>> output.find('''INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) SELECT '2011-08-18 00:02:00', '2011-08-18 00:04:00', 123, 456, '/bin/cat', 'itasca0001' WHERE ''') >= 0
+  >>> output.find('''INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) SELECT '2011-08-18 00:02:00', '2011-08-18 00:04:00', 123, 456, '/opt/bin/cat', 'itasca0001' WHERE ''') >= 0
   True
   >>> output.find('''UPDATE RAW_COLLECTL_EXECUTIONS SET START_TIME = '2011-08-18 00:02:00' WHERE ID IN (SELECT ID FROM ''') >= 0
   True
@@ -409,16 +434,7 @@ class StreamCollectlSqlDumper(BaseCollectlSqlDumper):
     with self.lock:
       for statement in statements:
         print >> self.stream, statement
-
   
-def parsing_started_file(log_file_path_prefix):
-  return log_file_path_prefix + "-parsing-started"
-
-def parsing_completed_file(log_file_path_prefix):
-  return log_file_path_prefix + "-parsing-completed"
-
-def stderr_file(log_file_path_prefix):
-  return log_file_path_prefix + "-stderr"
 
 class CollectlSqlDumperFactroy:
   
@@ -436,27 +452,104 @@ class CollectlFileScanner:
   """
   
   """
-  def __init__(self, options, node_name, rawp_file, log_file_base):
+
+  def __stderr_file(self, log_file_path_prefix):
+    return os.path.join(os.path.join(self.options.log_directory, self.options.host_prefix), log_file_path_prefix + "-stderr")
+
+  def __init__(self, options, node_name, rawp_file, relative_file_path, log_recorder):
+    self.options = options
     self.node_name = node_name
     self.rawp_file = rawp_file
-    self.collectl_executor = CollectlExecutor(rawp_file, stderr_file(log_file_base))
+    stderr_path = None
+    if not options.use_db():
+      stderr_path = self.__stderr_file(relative_file_path)
+    self.collectl_executor = CollectlExecutor(rawp_file, stderr_path)
     self.collectl_summary_factory = CollectlSummaryFactory()
     self.collectl_sql_dumper_factory = CollectlSqlDumperFactroy(options)
-    self.log_file_base = log_file_base
+    self.relative_file_path = relative_file_path
+    self.log_recorder = log_recorder
 
   def log_start(self):
-    touch(parsing_started_file(self.log_file_base))
+    self.log_recorder.log_start(self.relative_file_path)
 
   def log_end(self):
-    touch(parsing_completed_file(self.log_file_base))
+    self.log_recorder.log_end(self.relative_file_path)
+
 
   def execute(self):
     self.log_start()
     self.collectl_executor.execute_collectl()
     collectl_output_file = self.collectl_executor.output_file()
     executions = self.collectl_summary_factory.build_for(collectl_output_file)
-    self.collectl_sql_dumper_factory.get_dumper().dump(executions, self.node_name)
+    self.collectl_sql_dumper_factory.get_dumper().dump(executions, self.node_name, self.rawp_file)
     self.log_end()
+
+class FileLogRecorder:
+
+  def __init__(self, options):
+    self.options = options
+
+  def __log_file_base(self, dir_file):
+    return os.path.join(os.path.join(self.options.log_directory, self.options.host_prefix), dir_file)
+    
+  def previously_recorded(self, filename):
+    return os.path.exists(self.__parsing_completed_file(self.__log_file_base(filename)))
+
+  def log_start(self, relative_file_path):
+    self.__touch(self.__parsing_started_file(self.__log_file_base(relative_file_path)))
+
+  def log_end(self, relative_file_path):
+    self.__touch(self.__parsing_completed_file(self.__log_file_base(relative_file_path)))
+
+  def __parsing_started_file(self, log_file_path_prefix):
+    return log_file_path_prefix + "-parsing-started"
+
+  def __parsing_completed_file(self, log_file_path_prefix):
+    return log_file_path_prefix + "-parsing-completed"
+
+  def __touch(self, file_name):
+    parent_directory = os.path.dirname(file_name)
+    if not os.path.exists(parent_directory):
+      os.makedirs(parent_directory)
+    with file(file_name, 'a'):
+      os.utime(file_name, None)
+
+
+class DbLogRecorder:
+  def __init__(self, options):
+    self.options = options
+    self.connection = PostgresConnectionFactory(options).get_database_connection()
+
+  def previously_recorded(self, filename):
+    full_path = os.path.join(self.options.directory, filename)
+    cursor = self.connection.cursor()
+    cursor.execute("select 1 from PROCESSED_COLLECTL_LOGS where NAME = %s", (full_path,))
+    found_row = cursor.fetchone() is not None
+    cursor.close()
+    return found_row
+
+  def log_start(self, filename):
+    pass
+
+  def log_end(self, filename):
+    pass
+
+class LogRecorder:
+
+  def __init__(self, options):
+    if options.use_db():
+      self.delegate = DbLogRecorder(options)
+    else:
+      self.delegate = FileLogRecorder(options)
+
+  def previously_recorded(self, filename):
+    return self.delegate.previously_recorded(filename)
+
+  def log_start(self, filename):
+    self.delegate.log_start(filename)
+
+  def log_end(self, filename):
+    self.delegate.log_end(filename)
 
 class CollectlDirectoryScanner:
   """
@@ -540,25 +633,22 @@ class CollectlDirectoryScanner:
     do_parse = re.match("^(.*/)?\w+-%s-\w+.rawp.gz$" % date_match, dir_file)
     return do_parse is not None
 
-  def __log_file_base(self, dir_file):
-    return os.path.join(os.path.join(self.log_directory, self.host_prefix), dir_file)
-
   def __previously_parsed(self, dir_file):
-    return os.path.exists(parsing_completed_file(self.__log_file_base(dir_file)))
+    return self.log_recorder.previously_recorded(dir_file)
 
   def __node_name(self, rawp_file):
     return "%s%s" % (self.host_prefix, os.path.basename(rawp_file).split("-")[0])
 
   def __build_file_parser(self, rawp_file):
-    return CollectlFileScanner(self.options, self.__node_name(rawp_file), os.path.join(self.directory, rawp_file), self.__log_file_base(rawp_file))
+    return CollectlFileScanner(self.options, self.__node_name(rawp_file), os.path.join(self.directory, rawp_file), rawp_file, self.log_recorder)
     
   def __init__(self, options):
     self.options = options
     self.date = options.date
     self.directory = options.directory
     self.host_prefix = options.host_prefix
-    self.log_directory = options.log_directory
     self.batch_size = options.batch_size
+    self.log_recorder = LogRecorder(options)
     self.batch_count = 0
   
 def has_text(input):
@@ -572,13 +662,18 @@ def has_text(input):
   """  
   return not input is None and not input == ''
 
-class TestCollectlParseOptions:
+class BaseCollectlParseOptions:
+
+  def use_db(self):
+    return self.output_type == "postgres"
+
+class TestCollectlParseOptions(BaseCollectlParseOptions):
 
   def __init__(self, **dynamic_options):
     for key, value in dynamic_options.iteritems():
       self.__dict__[key] = value
 
-class CollectlParseOptions:
+class CollectlParseOptions(BaseCollectlParseOptions):
   
   def __get_database_option(self, parser, option_name, default = None):
     option = default
@@ -599,7 +694,7 @@ class CollectlParseOptions:
     parser.add_option("--directory", dest="directory", help="Directory to scan for collectl files")
     parser.add_option("--batch_size", dest="batch_size", help="Maximum number of files to parse.", type="int", default = None)
     parser.add_option("--output_type", dest="output_type", help="Output type (e.g. postgres, stdout).", default="postgres", choices=["stdout", "postgres"])
-    parser.add_option("--log_directory", dest="log_directory", help="Directory to record information about which files have been processed.", default="collectl_parse_log")
+    parser.add_option("--log_directory", dest="log_directory", help="Directory to record information about which files have been processed, used only if output type is stdout.", default="collectl_parse_log")
     parser.add_option("--num_threads", dest="num_threads", type="int", default = 1)
     
     parser.add_option("--pg_database", dest="pg_database", default=None)
