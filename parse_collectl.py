@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 from datetime import datetime, timedelta
 import time
+import threading
+import Queue
 
 # ~/parse_collectl.py  --directory /project/collectl/itasca --host_prefix itasca --log_directory /home/it1/chilton/logs --batch_size 100
 
@@ -288,10 +290,92 @@ class MockCollectlSummaryFactory:
     parser = CollectlSummary(temp_file.name)
     return parser.build()
 
-class CollectlSqlDumper:
+class BaseCollectlSqlDumper:
+
+  def dump(self, executions, host):
+    statements = []
+    for execution in executions:
+      for statement in self.get_statements_for_execution(execution, host):
+        statements.append(statement)
+    self.handle_statements(statements)
+
+  def get_statements_for_execution(self, execution, host):
+    start = execution[0]
+    postgres_start = to_postgres_date(start)
+    end = execution[1]
+    postgres_end = to_postgres_date(end)
+    pid = execution[2]
+    uid = execution[3]
+    executable = execution[4]
+    cutoff_type = execution[5]
+    statements = []
+    if cutoff_type == DateCutoffType.none:
+      insert_template = "INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) VALUES ('%s', '%s', %s, %s, '%s', '%s');"
+      insert_statement = (insert_template % (postgres_start, postgres_end, pid, uid, escape_quotes(executable), host))
+      #self.handle_statement(insert_statement)
+      statements.append(insert_statement)
+    else:
+      same_execution_condition = BaseCollectlSqlDumper.same_execution_condition(execution, host)
+      insert_template = "INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) SELECT '%s', '%s', %s, %s, '%s', '%s' WHERE 1 NOT IN (SELECT 1 FROM RAW_COLLECTL_EXECUTIONS WHERE %s);"
+      insert_statement =  (insert_template % (postgres_start, postgres_end, pid, uid, escape_quotes(executable), host,  same_execution_condition))
+      #self.handle_statement(insert_statement)
+      statements.append(insert_statement)
+      if cutoff_type == DateCutoffType.end or cutoff_type == DateCutoffType.both:
+        update_start_template = "UPDATE RAW_COLLECTL_EXECUTIONS SET START_TIME = '%s' WHERE ID IN (SELECT ID FROM RAW_COLLECTL_EXECUTIONS WHERE %s AND START_TIME > '%s');"
+        update_start_statement = update_start_template % (postgres_start, same_execution_condition, postgres_start)
+        #self.handle_statement(update_start_statement)
+        statements.append(update_start_statement)
+
+      if cutoff_type == DateCutoffType.start or cutoff_type == DateCutoffType.both:
+        update_end_template = "UPDATE RAW_COLLECTL_EXECUTIONS SET END_TIME = '%s' WHERE ID IN (SELECT ID FROM RAW_COLLECTL_EXECUTIONS WHERE %s AND END_TIME < '%s');"
+        update_end_statement = update_end_template % (postgres_end, same_execution_condition, postgres_end)
+        #self.handle_statement(update_end_statement)
+        statements.append(update_end_statement)
+    return statements
+
+  @staticmethod
+  def same_execution_condition(execution, host):
+    """
+    >>> execution = [CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/bin/cat', True]
+    >>> condition = BaseCollectlSqlDumper.same_execution_condition(execution, 'itasca0001')
+    >>> condition
+    "HOST = 'itasca0001' AND PID = '123' AND UID = '456' AND EXECUTABLE = '/bin/cat' AND START_TIME > '2011-08-04 00:02:00' AND END_TIME < '2011-09-01 00:04:00'"
+    """
+    start = execution[0]
+    end = execution[1]
+    pid = execution[2]
+    uid = execution[3]
+    executable = execution[4]
+
+    same_execution_condition_template = "HOST = '%s' AND PID = '%s' AND UID = '%s' AND EXECUTABLE = '%s' AND START_TIME > '%s' AND END_TIME < '%s'"
+    start_datetime = datetime(*start[0:6])
+    end_datetime = datetime(*end[0:6])
+    one_week = timedelta(weeks=2)
+    condition = same_execution_condition_template % (host, pid, uid, executable, to_postgres_date(start_datetime - one_week), to_postgres_date(end_datetime + one_week))
+    return condition
+
+class PostgresCollectlSqlDumper(BaseCollectlSqlDumper):
+  
+  def __get_database_connection(self, options):
+    import psycopg2
+    return psycopg2.connect(database=options.pg_database, user=options.pg_username, password=options.pg_password, host=options.pg_host, port=options.pg_port)
+
+  def __init__(self, options):
+    self.connection = self.__get_database_connection(options)
+        
+  def handle_statements(self, statements):
+    cursor = self.connection.cursor()
+    for statement in statements:
+      cursor.execute(statement)
+    cursor.close()
+    self.connection.commit()
+
+
+class StreamCollectlSqlDumper(BaseCollectlSqlDumper):
+  
   """
   >>> import StringIO
-  >>> def dump(e): output = StringIO.StringIO(); sql_dumper = CollectlSqlDumper(output); sql_dumper.dump(e, 'itasca0001'); return output.getvalue()
+  >>> def dump(e): output = StringIO.StringIO(); sql_dumper = StreamCollectlSqlDumper(output); sql_dumper.dump(e, 'itasca0001'); return output.getvalue()
   >>> output = dump([(CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/bin/cat', 0)])
   >>> output.strip() #doctest: +NORMALIZE_WHITESPACE
   "INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) VALUES ('2011-08-18 00:02:00', '2011-08-18 00:04:00', 123, 456, '/bin/cat', 'itasca0001');"
@@ -319,59 +403,14 @@ class CollectlSqlDumper:
 
   def __init__(self, stream = sys.stdout):
     self.stream = stream
-    
-  def dump(self, executions, host):
-    for execution in executions:
-      self.dump_execution(execution, host)
+    self.lock = threading.Lock()
 
-  def dump_execution(self, execution, host):
-    start = execution[0]
-    postgres_start = to_postgres_date(start)
-    end = execution[1]
-    postgres_end = to_postgres_date(end)
-    pid = execution[2]
-    uid = execution[3]
-    executable = execution[4]
-    cutoff_type = execution[5]
-    if cutoff_type == DateCutoffType.none:
-      insert_template = "INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) VALUES ('%s', '%s', %s, %s, '%s', '%s');"
-      insert_statement = (insert_template % (postgres_start, postgres_end, pid, uid, escape_quotes(executable), host))
-      print >> self.stream, insert_statement
-    else:
-      same_execution_condition = CollectlSqlDumper.same_execution_condition(execution, host)
-      insert_template = "INSERT INTO RAW_COLLECTL_EXECUTIONS (START_TIME, END_TIME, PID, UID, EXECUTABLE, HOST) SELECT '%s', '%s', %s, %s, '%s', '%s' WHERE 1 NOT IN (SELECT 1 FROM RAW_COLLECTL_EXECUTIONS WHERE %s);"
-      insert_statement =  (insert_template % (postgres_start, postgres_end, pid, uid, escape_quotes(executable), host,  same_execution_condition))
-      print >> self.stream, insert_statement
-      if cutoff_type == DateCutoffType.end or cutoff_type == DateCutoffType.both:
-        update_start_template = "UPDATE RAW_COLLECTL_EXECUTIONS SET START_TIME = '%s' WHERE ID IN (SELECT ID FROM RAW_COLLECTL_EXECUTIONS WHERE %s AND START_TIME > '%s');"
-        update_start_statement = update_start_template % (postgres_start, same_execution_condition, postgres_start)
-        print >> self.stream, update_start_statement
-      if cutoff_type == DateCutoffType.start or cutoff_type == DateCutoffType.both:
-        update_end_template = "UPDATE RAW_COLLECTL_EXECUTIONS SET END_TIME = '%s' WHERE ID IN (SELECT ID FROM RAW_COLLECTL_EXECUTIONS WHERE %s AND END_TIME < '%s');"
-        update_end_statement = update_end_template % (postgres_end, same_execution_condition, postgres_end)
-        print >> self.stream, update_end_statement
-      
-  @staticmethod
-  def same_execution_condition(execution, host):
-    """
-    >>> execution = [CollectlSummary.parse_timestamp('20110818 00:02:00'), CollectlSummary.parse_timestamp('20110818 00:04:00'), 123, 456, '/bin/cat', True]
-    >>> condition = CollectlSqlDumper.same_execution_condition(execution, 'itasca0001')
-    >>> condition
-    "HOST = 'itasca0001' AND PID = '123' AND UID = '456' AND EXECUTABLE = '/bin/cat' AND START_TIME > '2011-08-04 00:02:00' AND END_TIME < '2011-09-01 00:04:00'"
-    """
-    start = execution[0]
-    end = execution[1]
-    pid = execution[2]
-    uid = execution[3]
-    executable = execution[4]
+  def handle_statements(self, statements):
+    with self.lock:
+      for statement in statements:
+        print >> self.stream, statement
 
-    same_execution_condition_template = "HOST = '%s' AND PID = '%s' AND UID = '%s' AND EXECUTABLE = '%s' AND START_TIME > '%s' AND END_TIME < '%s'"
-    start_datetime = datetime(*start[0:6])
-    end_datetime = datetime(*end[0:6])
-    one_week = timedelta(weeks=2)
-    condition = same_execution_condition_template % (host, pid, uid, executable, to_postgres_date(start_datetime - one_week), to_postgres_date(end_datetime + one_week))
-    return condition
-
+  
 def parsing_started_file(log_file_path_prefix):
   return log_file_path_prefix + "-parsing-started"
 
@@ -381,16 +420,28 @@ def parsing_completed_file(log_file_path_prefix):
 def stderr_file(log_file_path_prefix):
   return log_file_path_prefix + "-stderr"
 
+class CollectlSqlDumperFactroy:
+  
+  def __init__(self, options):
+    if options.output_type == "stdout":
+      self.sql_dumper = StreamCollectlSqlDumper()
+    else:
+      self.sql_dumper = PostgresCollectlSqlDumper(options)
+    
+  def get_dumper(self):
+    return self.sql_dumper
+
+
 class CollectlFileScanner:
   """
   
   """
-  def __init__(self, node_name, rawp_file, log_file_base):
+  def __init__(self, options, node_name, rawp_file, log_file_base):
     self.node_name = node_name
     self.rawp_file = rawp_file
     self.collectl_executor = CollectlExecutor(rawp_file, stderr_file(log_file_base))
     self.collectl_summary_factory = CollectlSummaryFactory()
-    self.collectl_sql_dumper = CollectlSqlDumper()
+    self.collectl_sql_dumper_factory = CollectlSqlDumperFactroy(options)
     self.log_file_base = log_file_base
 
   def log_start(self):
@@ -404,7 +455,7 @@ class CollectlFileScanner:
     self.collectl_executor.execute_collectl()
     collectl_output_file = self.collectl_executor.output_file()
     executions = self.collectl_summary_factory.build_for(collectl_output_file)
-    self.collectl_sql_dumper.dump(executions, self.node_name)
+    self.collectl_sql_dumper_factory.get_dumper().dump(executions, self.node_name)
     self.log_end()
 
 class CollectlDirectoryScanner:
@@ -418,8 +469,9 @@ class CollectlDirectoryScanner:
   >>> open(temp_date_dir + "/node0507-20110819-000100.raw.gz", 'w').close()
   >>> itasca_log_dir = os.path.join(temp_log_dir, "itasca")
   >>> os.makedirs(itasca_log_dir)
+  >>> options = TestCollectlParseOptions(date='20110819', directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout')
   >>> open(os.path.join(itasca_log_dir, "node0507-20110819-000100.rawp.gz-parsing-completed"), 'w').close() # Mark file as previously processed
-  >>> dated_dir_scanner = CollectlDirectoryScanner('20110819', temp_date_dir, temp_log_dir, 'itasca')
+  >>> dated_dir_scanner = CollectlDirectoryScanner(options)
   >>> nodes = dated_dir_scanner.get_node_scanners()
   >>> file_scanner = nodes.next()
   >>> file_scanner.node_name
@@ -430,7 +482,8 @@ class CollectlDirectoryScanner:
   StopIteration
   >>> open(temp_date_dir + "/node0506-20110820-000100.rawp.gz", 'w').close()
   >>> open(temp_date_dir + "/node0506-20110820-000100.raw.gz", 'w').close()
-  >>> undated_dir_scanner = CollectlDirectoryScanner(None, temp_date_dir, temp_log_dir, 'itasca')
+  >>> options =  TestCollectlParseOptions(date=None, directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout')
+  >>> undated_dir_scanner = CollectlDirectoryScanner(options)
   >>> nodes = undated_dir_scanner.get_node_scanners()
   >>> files = [os.path.basename(nodes.next().rawp_file), os.path.basename(nodes.next().rawp_file)]
   >>> files.sort()
@@ -450,9 +503,32 @@ class CollectlDirectoryScanner:
         self.batch_count = self.batch_count + 1
         yield self.__build_file_parser(dir_file)
 
+  def execute_file_parser(self):
+    while True:
+      file_parser = self.queue.get()
+      try:
+        file_parser.execute()
+      except Exception, err:
+        sys.stderr.write('ERROR: %s\n' % str(err))
+      finally:
+        self.queue.task_done()
+
   def execute(self):
+    self.queue = Queue.Queue()
+    self.all_items_added = False
+
+    threads = []
+    for i in range(self.options.num_threads):
+      t = threading.Thread(target=self.execute_file_parser)
+      t.daemon = True
+      threads.append(t)
+      t.start()
+
     for file_parser in self.get_node_scanners():
-      file_parser.execute()
+      self.queue.put(file_parser)
+
+    self.queue.join()
+    
 
   def __do_parse_file(self, dir_file):
     return self.__filename_matches(dir_file) and not self.__previously_parsed(dir_file)
@@ -474,17 +550,17 @@ class CollectlDirectoryScanner:
     return "%s%s" % (self.host_prefix, os.path.basename(rawp_file).split("-")[0])
 
   def __build_file_parser(self, rawp_file):
-    return CollectlFileScanner(self.__node_name(rawp_file), os.path.join(self.directory, rawp_file), self.__log_file_base(rawp_file))
+    return CollectlFileScanner(self.options, self.__node_name(rawp_file), os.path.join(self.directory, rawp_file), self.__log_file_base(rawp_file))
     
-  def __init__(self, date, directory, log_directory, host_prefix, batch_size = None):
-    self.date = date
-    self.directory = directory
-    self.host_prefix = host_prefix
-    self.log_directory = log_directory
-    self.batch_size = batch_size
+  def __init__(self, options):
+    self.options = options
+    self.date = options.date
+    self.directory = options.directory
+    self.host_prefix = options.host_prefix
+    self.log_directory = options.log_directory
+    self.batch_size = options.batch_size
     self.batch_count = 0
   
-
 def has_text(input):
   """
   >>> not has_text('')
@@ -496,24 +572,73 @@ def has_text(input):
   """  
   return not input is None and not input == ''
 
-def main():
-  from optparse import OptionParser
-  parser = OptionParser()
-  parser.add_option("--date", dest="date", help="Date in format YYYYMMDD")
-  parser.add_option("--host_prefix", dest="host_prefix", help="Host name prefix (e.g. itasca)")
-  parser.add_option("--directory", dest="directory", help="Directory to scan for collectl files")
-  parser.add_option("--batch_size", dest="batch_size", help="Maximum number of files to parse.", type="int", default = None)
-  parser.add_option("--log_directory", dest="log_directory", help="Directory to record information about which files have been processed.", default="collectl_parse_log")
-  (options, args) = parser.parse_args()
-  date = options.date
-  host_prefix = options.host_prefix
-  directory = options.directory
-  log_directory = options.log_directory
-  if not has_text(host_prefix) or not has_text(directory):
-    parser.error("Incorrect arguments")
-  batch_size = options.batch_size
-  CollectlDirectoryScanner(date = date, directory = directory, log_directory = log_directory, host_prefix = host_prefix, batch_size = batch_size).execute()
+class TestCollectlParseOptions:
 
+  def __init__(self, **dynamic_options):
+    for key, value in dynamic_options.iteritems():
+      self.__dict__[key] = value
+
+class CollectlParseOptions:
+  
+  def __get_database_option(self, parser, option_name, default = None):
+    option = default
+    environment_variable = option_name.upper()
+    if parser.__dict__.has_key(option_name):
+      option = parser.__dict__[option_name]
+    elif os.environ.has_key(environment_variable):
+      option = os.environ[environment_variable]
+    if option is None:
+      parser.error("output_type postgres chosen, but failed to specify database parameter %s and could not find fallback value specified as environment variable %s" % (option_name, environment_variable))
+    return option
+
+  def __init__(self):
+    from optparse import OptionParser
+    parser = OptionParser()
+    parser.add_option("--date", dest="date", help="Date in format YYYYMMDD")
+    parser.add_option("--host_prefix", dest="host_prefix", help="Host name prefix (e.g. itasca)")
+    parser.add_option("--directory", dest="directory", help="Directory to scan for collectl files")
+    parser.add_option("--batch_size", dest="batch_size", help="Maximum number of files to parse.", type="int", default = None)
+    parser.add_option("--output_type", dest="output_type", help="Output type (e.g. postgres, stdout).", default="postgres", choices=["stdout", "postgres"])
+    parser.add_option("--log_directory", dest="log_directory", help="Directory to record information about which files have been processed.", default="collectl_parse_log")
+    parser.add_option("--num_threads", dest="num_threads", type="int", default = 1)
+    
+    parser.add_option("--pg_database", dest="pg_database", default=None)
+    parser.add_option("--pg_username", dest="pg_username", default=None)
+    parser.add_option("--pg_password", dest="pg_password", default=None)
+    parser.add_option("--pg_port", dest="pg_port", default=None)
+    parser.add_option("--pg_host", dest="pg_host", default=None)
+
+    parser.add_option("--check_database_connection", dest="check_database_connection", help="Check database connection before beginning parse.", action="store_true", default=False)
+    parser.add_option("--check_args_only", dest="check_args_only", help="Do not run anything, just check that passed arguments are valid.", action="store_true", default=False)
+
+    (options, args) = parser.parse_args()
+    self.date = options.date
+    self.host_prefix = options.host_prefix
+    self.directory = options.directory
+    self.log_directory = options.log_directory
+    self.batch_size = options.batch_size
+    self.output_type = options.output_type
+    self.scan = not options.check_args_only
+    self.check_database_connection = options.check_database_connection
+    self.num_threads = options.num_threads
+
+    if not has_text(self.host_prefix):
+      parser.error("Argument host_prefix not specified.")
+    if not has_text(self.directory):
+      parser.error("Directory to scan not specified.")
+    if self.output_type == "postgres":
+      self.pg_database = self.__get_database_option(parser, "pg_database")
+      self.pg_username = self.__get_database_option(parser, "pg_username")
+      self.pg_password = self.__get_database_option(parser, "pg_password")
+      self.pg_host = self.__get_database_option(parser, "pg_host", "localhost")
+      self.pg_port = self.__get_database_option(parser, "pg_port")
+
+def main():
+  options = CollectlParseOptions()
+  if options.check_database_connection:
+    PostgresCollectlSqlDumper(options)
+  if options.scan:
+    CollectlDirectoryScanner(options).execute()
 
 if __name__ == "__main__":
   main()
