@@ -39,6 +39,12 @@ def escape_quotes(str):
 
 class CollectlCommandLineBuilder:
 
+  def __init__(self, collectl_path = None):
+    if not collectl_path:
+      self.collectl_path = "collectl"
+    else:
+      self.collectl_path = collectl_path
+
   def get(self, rawp_path):
     """
     Abstract this out of CollectlExecutor to allow for the unit
@@ -49,7 +55,7 @@ class CollectlCommandLineBuilder:
     >>> builder.get("/project/collectl/itsaca/node0506-20110819-000100.rawp.gz")
     'collectl -sZ -P -p /project/collectl/itsaca/node0506-20110819-000100.rawp.gz'
     """
-    return "collectl -sZ -P -p %s" % rawp_path
+    return "%s -sZ -P -p %s" % (self.collectl_path, rawp_path)
 
 class TestCommandLineBuilder:
 
@@ -70,7 +76,7 @@ class CollectlExecutor:
   >>> contents.strip()
   'Hello World'
   """
-  def __init__(self, rawp_file, stderr_file = None):
+  def __init__(self, rawp_file, stderr_file = None, collectl_path = None):
     self.rawp_file = rawp_file
     if stderr_file is not None:
       self.stderr_file = stderr_file
@@ -80,7 +86,7 @@ class CollectlExecutor:
       self.stderr_temp = True
 
     self.collectl_output_file = tempfile.mkstemp()
-    self.collectl_command_line_builder = CollectlCommandLineBuilder()
+    self.collectl_command_line_builder = CollectlCommandLineBuilder(collectl_path)
 
   def __del__(self):
     os.remove(self.output_file())
@@ -463,7 +469,7 @@ class CollectlFileScanner:
     stderr_path = None
     if not options.use_db():
       stderr_path = self.__stderr_file(relative_file_path)
-    self.collectl_executor = CollectlExecutor(rawp_file, stderr_path)
+    self.collectl_executor = CollectlExecutor(rawp_file, stderr_path, options.collectl_path)
     self.collectl_summary_factory = CollectlSummaryFactory()
     self.collectl_sql_dumper_factory = CollectlSqlDumperFactroy(options)
     self.relative_file_path = relative_file_path
@@ -607,7 +613,7 @@ class CollectlDirectoryScanner:
         self.queue.task_done()
 
   def execute(self):
-    self.queue = Queue.Queue()
+    self.queue = Queue.Queue(128)
     self.all_items_added = False
 
     threads = []
@@ -618,7 +624,7 @@ class CollectlDirectoryScanner:
       t.start()
 
     for file_parser in self.get_node_scanners():
-      self.queue.put(file_parser)
+      self.queue.put(file_parser, True)
 
     self.queue.join()
     
@@ -696,6 +702,7 @@ class CollectlParseOptions(BaseCollectlParseOptions):
     parser.add_option("--output_type", dest="output_type", help="Output type (e.g. postgres, stdout).", default="postgres", choices=["stdout", "postgres"])
     parser.add_option("--log_directory", dest="log_directory", help="Directory to record information about which files have been processed, used only if output type is stdout.", default="collectl_parse_log")
     parser.add_option("--num_threads", dest="num_threads", type="int", default = 1)
+    parser.add_option("--collectl_path", dest="collectl_path", help="Path to collectl script/executable, if not specified this should be on the caller's PATH", default=None)
     
     parser.add_option("--pg_database", dest="pg_database", default=None)
     parser.add_option("--pg_username", dest="pg_username", default=None)
@@ -716,6 +723,8 @@ class CollectlParseOptions(BaseCollectlParseOptions):
     self.scan = not options.check_args_only
     self.check_database_connection = options.check_database_connection
     self.num_threads = options.num_threads
+    self.collectl_path = options.collectl_path
+    
 
     if not has_text(self.host_prefix):
       parser.error("Argument host_prefix not specified.")
