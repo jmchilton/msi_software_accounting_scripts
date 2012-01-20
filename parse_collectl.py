@@ -17,6 +17,9 @@ BLACKLIST = "^(sshd:|/bin/.*|python|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh)$
 def filter_executable(executable):
   return re.match(BLACKLIST, executable) is not None
 
+def filter_uid(uid):
+  return not re.match("^\d+$", uid)
+
 def to_postgres_date(time_object):
   """
   >>> time_tuple = CollectlSummary.parse_timestamp('20110831 15:29:59')
@@ -245,7 +248,7 @@ class CollectlSummary:
     pid = parsed_line[1]
     uid = parsed_line[2]
     executable = parsed_line[3]
-    if filter_executable(executable):
+    if filter_executable(executable) or filter_uid(uid):
       return None
     if re.match('^(\d+|-bash)$', executable) is not None:
       print "Bad line found [%s]" % line
@@ -568,7 +571,7 @@ class CollectlDirectoryScanner:
   >>> open(temp_date_dir + "/node0507-20110819-000100.raw.gz", 'w').close()
   >>> itasca_log_dir = os.path.join(temp_log_dir, "itasca")
   >>> os.makedirs(itasca_log_dir)
-  >>> options = TestCollectlParseOptions(date='20110819', directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout')
+  >>> options = TestCollectlParseOptions(date='20110819', directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout', collectl_path=None)
   >>> open(os.path.join(itasca_log_dir, "node0507-20110819-000100.rawp.gz-parsing-completed"), 'w').close() # Mark file as previously processed
   >>> dated_dir_scanner = CollectlDirectoryScanner(options)
   >>> nodes = dated_dir_scanner.get_node_scanners()
@@ -581,7 +584,7 @@ class CollectlDirectoryScanner:
   StopIteration
   >>> open(temp_date_dir + "/node0506-20110820-000100.rawp.gz", 'w').close()
   >>> open(temp_date_dir + "/node0506-20110820-000100.raw.gz", 'w').close()
-  >>> options =  TestCollectlParseOptions(date=None, directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout')
+  >>> options =  TestCollectlParseOptions(date=None, directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout',collectl_path=None)
   >>> undated_dir_scanner = CollectlDirectoryScanner(options)
   >>> nodes = undated_dir_scanner.get_node_scanners()
   >>> files = [os.path.basename(nodes.next().rawp_file), os.path.basename(nodes.next().rawp_file)]
@@ -613,7 +616,7 @@ class CollectlDirectoryScanner:
         self.queue.task_done()
 
   def execute(self):
-    self.queue = Queue.Queue(128)
+    self.queue = Queue.Queue(32)
     self.all_items_added = False
 
     threads = []
