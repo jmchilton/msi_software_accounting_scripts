@@ -12,7 +12,7 @@ import Queue
 # ~/parse_collectl.py  --directory /project/collectl/itasca --host_prefix itasca --log_directory /home/it1/chilton/logs --batch_size 100
 
 # regexp to match executables we don't care about and which shouldn't be recorded (mostly system tools). 
-BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh)$"
+BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*)$"
 
 def filter_executable(executable):
   return re.match(BLACKLIST, executable) is not None
