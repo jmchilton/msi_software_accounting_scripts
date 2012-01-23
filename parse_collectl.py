@@ -12,7 +12,11 @@ import Queue
 # ~/parse_collectl.py  --directory /project/collectl/itasca --host_prefix itasca --log_directory /home/it1/chilton/logs --batch_size 100
 
 # regexp to match executables we don't care about and which shouldn't be recorded (mostly system tools). 
-BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*)$"
+BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*|.*/modulecmd|tee|gzip|tar)$"
+MERGE_LIST = "^(.*g09.*|l\d+\.exel?)$"
+
+def merge_executable(executable):
+  return re.match(MERGE_LIST, executable) is not None
 
 def filter_executable(executable):
   return re.match(BLACKLIST, executable) is not None
@@ -465,6 +469,61 @@ class CollectlSqlDumperFactroy:
   def get_dumper(self):
     return self.sql_dumper
 
+class CollectlExecutionMerger:
+  """
+  In an effort to reduce records produced, merge executions that only occur at one timestamp and have the same executable and uid. 
+
+  >>> def get_count(executions): merger = CollectlExecutionMerger(); merger.merge(executions); return len(merger.get_merged_executions())
+  >>> def test_time(): return CollectlSummary.parse_timestamp('20110818 00:02:00')
+  >>> get_count([[test_time(), CollectlSummary.parse_timestamp('20110818 00:03:00'), 3, 1, 'g09' ]])
+  1
+  >>> get_count([[test_time(), test_time(), 3, 1, 'g09'],[test_time(), test_time(), 4, 1, 'g09x']] )
+  2
+  >>> get_count([[test_time(), test_time(), 3, 1, 'g09'],[test_time(), test_time(), 4, 2, 'g09']] )
+  2
+  >>> get_count([[test_time(), test_time(), 3, 1, 'g09'],[test_time(), test_time(), 4, 1, 'g09']] )
+  1
+  >>> get_count([[test_time(), test_time(), 3, 1, 'l501.exel'],[test_time(), test_time(), 4, 1, 'l501.exel']] )
+  1
+  >>> get_count([[test_time(), test_time(), 3, 1, '/bin/ls'],[test_time(), test_time(), 4, 1, '/bin/ls']] )
+  2
+  """
+
+  def __init__(self):
+    self.merged_executions = []
+  
+  def merge(self, executions):
+    for execution in executions:
+      start = execution[0]
+      end = execution[1]
+      is_single_observation = start == end
+      if not is_single_observation:
+        self.__append_execution(execution)
+      else:
+        self.__merge_single_execution(execution)
+
+  def __append_execution(self, execution):
+    self.merged_executions.append(execution)
+    
+  def __merge_single_execution(self, execution):
+    start = execution[0]
+    uid = execution[3]
+    found_match = False
+    for merged_execution in self.merged_executions:
+      merged_start = merged_execution[0]
+      merged_end = merged_execution[1]
+      merged_uid = merged_execution[3]
+      merged_executable = merged_execution[4]
+      if start == merged_start and start == merged_end and uid == merged_uid and execution[4] == merged_executable and merge_executable(merged_executable):
+        found_match = True
+        break
+    if not found_match:
+      self.__append_execution(execution)
+    
+  def get_merged_executions(self):
+    return self.merged_executions
+  
+
 
 class CollectlFileScanner:
   """
@@ -500,6 +559,9 @@ class CollectlFileScanner:
     collectl_output_file = self.collectl_executor.output_file()
     executions = self.collectl_summary_factory.build_for(collectl_output_file)
     self.collectl_executor.remove_output_file()
+    execution_merger = CollectlExecutionMerger()
+    execution_merger.merge(executions)
+    executions = execution_merger.get_merged_executions()
     self.collectl_sql_dumper_factory.get_dumper().dump(executions, self.node_name, self.rawp_file)
     self.log_end()
 
