@@ -12,7 +12,7 @@ import Queue
 # ~/parse_collectl.py  --directory /project/collectl/itasca --host_prefix itasca --log_directory /home/it1/chilton/logs --batch_size 100
 
 # regexp to match executables we don't care about and which shouldn't be recorded (mostly system tools). 
-BLACKLIST = "^(sshd:|/bin/.*|python|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh)$"
+BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh)$"
 
 def filter_executable(executable):
   return re.match(BLACKLIST, executable) is not None
@@ -81,39 +81,48 @@ class CollectlExecutor:
   """
   def __init__(self, rawp_file, stderr_file = None, collectl_path = None):
     self.rawp_file = rawp_file
-    if stderr_file is not None:
-      self.stderr_file = stderr_file
-      self.stderr_temp = False
-    else:
-      self.stderr_file = tempfile.mkstemp()[1]
-      self.stderr_temp = True
+    self.stderr_file = stderr_file
+    self.stderr_temp = stderr_file is None
 
     self.collectl_output_file = tempfile.mkstemp()
     self.collectl_command_line_builder = CollectlCommandLineBuilder(collectl_path)
 
-  def __del__(self):
-    os.remove(self.output_file())
-    if self.stderr_temp:
-      os.remove(self.error_file())
 
   def execute_collectl(self):
+    if self.stderr_temp:
+      stderr_tuple = tempfile.mkstemp()
+      os.close(stderr_tuple[0])
+      self.stderr_file = stderr_tuple[1]
+
     command_line = self.collectl_command_line_builder.get(self.rawp_file)
     stdout_fileno = self.collectl_output_file[0]
     stderr_stream = open(self.stderr_file, 'w')
-    proc = subprocess.Popen(command_line, shell=True, stdout=stdout_fileno, stderr=stderr_stream)
-    return_code = proc.wait()
-    os.close(stdout_fileno)
-    stderr_stream.close()
+    try:
+      proc = subprocess.Popen(command_line, shell=True, stdout=stdout_fileno, stderr=stderr_stream)
+      return_code = proc.wait()
+    finally:
+      os.close(stdout_fileno)
+      stderr_stream.close()
 
     if return_code != 0:
-      stderr_contents = open(self.stderr_file, 'r').read()
+      stderr_contents = self.__read_stderr()
       raise RuntimeError("collectl did not return a status code of 0, process standard error was %s" % stderr_contents)
+    if self.stderr_temp:
+      os.remove(self.stderr_file)    
+
+  def __read_strerr(self):
+    file = open(self.stderr_file, 'r')
+    try:
+      contents = file.read()
+      return contents
+    finally:
+      file.close()
 
   def output_file(self):
     return self.collectl_output_file[1]
-
-  def error_file(self):
-    return self.stderr_file
+  
+  def remove_output_file(self):
+    os.remove(self.collectl_output_file[1])
 
 class TestCollectlData:
   line1 = "#Test Line"
@@ -490,6 +499,7 @@ class CollectlFileScanner:
     self.collectl_executor.execute_collectl()
     collectl_output_file = self.collectl_executor.output_file()
     executions = self.collectl_summary_factory.build_for(collectl_output_file)
+    self.collectl_executor.remove_output_file()
     self.collectl_sql_dumper_factory.get_dumper().dump(executions, self.node_name, self.rawp_file)
     self.log_end()
 
