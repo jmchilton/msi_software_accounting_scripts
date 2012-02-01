@@ -12,7 +12,7 @@ import Queue
 # ~/parse_collectl.py  --directory /project/collectl/itasca --host_prefix itasca --log_directory /home/it1/chilton/logs --batch_size 100
 
 # regexp to match executables we don't care about and which shouldn't be recorded (mostly system tools). 
-BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*|.*/modulecmd|tee|gzip|tar)$"
+BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*|.*/modulecmd|tee|gzip|tar|vi|make|/usr/bin/sh|less|/usr/bin/make|mv|pico|vim|scp|tail|sed|top|rsh|head|rsync|wc|awk|man|find)$"
 MERGE_LIST = "^(.*g09.*|l\d+\.exel?)$"
 
 def merge_executable(executable):
@@ -60,9 +60,9 @@ class CollectlCommandLineBuilder:
 
     >>> builder = CollectlCommandLineBuilder()
     >>> builder.get("/project/collectl/itsaca/node0506-20110819-000100.rawp.gz")
-    'collectl -sZ -P -p /project/collectl/itsaca/node0506-20110819-000100.rawp.gz'
+    'collectl -sZ -P --sep=9 -p /project/collectl/itsaca/node0506-20110819-000100.rawp.gz'
     """
-    return "%s -sZ -P -p %s" % (self.collectl_path, rawp_path)
+    return "%s -sZ -P --sep=9 -p %s" % (self.collectl_path, rawp_path)
 
 class TestCommandLineBuilder:
 
@@ -114,7 +114,7 @@ class CollectlExecutor:
     if self.stderr_temp:
       os.remove(self.stderr_file)    
 
-  def __read_strerr(self):
+  def __read_stderr(self):
     file = open(self.stderr_file, 'r')
     try:
       contents = file.read()
@@ -130,11 +130,11 @@ class CollectlExecutor:
 
 class TestCollectlData:
   line1 = "#Test Line"
-  line2 = "20110818 00:02:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
-  line3 = "20110818 00:04:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
-  line4 = "20110818 00:04:00 22737 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/cat"
-  line5 = "20110818 00:05:00 22737 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/cat"
-  line6 = "20110818 00:06:00 22734 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/ls"
+  line2 = "20110818	00:02:00	22733	31062	20	22686	0	S	12620	0	1756	344	88	672	1940	2	0.00	0.00	0	0:00.00	0	0	0	0	0	0	0	0	0	/opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
+  line3 = "20110818	00:04:00	22733	31062	20	22686	0	S	12620	0	1756	344	88	672	1940	2	0.00	0.00	0	0:00.00	0	0	0	0	0	0	0	0	0	/opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC"
+  line4 = "20110818	00:04:00	22737	31062	20	22686	0	S	12620	0	1756	344	88	672	1940	2	0.00	0.00	0	0:00.00	0	0	0	0	0	0	0	0	0	/opt/bin/cat"
+  line5 = "20110818	00:05:00	22737	31062	20	22686	0	S	12620	0	1756	344	88	672	1940	2	0.00	0.00	0	0:00.00	0	0	0	0	0	0	0	0	0	/opt/bin/cat"
+  line6 = "20110818	00:06:00	22734	31062	20	22686	0	S	12620	0	1756	344	88	672	1940	2	0.00	0.00	0	0:00.00	0	0	0	0	0	0	0	0	0	/opt/bin/ls"
 
   @staticmethod
   def make_temp_file():
@@ -196,7 +196,7 @@ class CollectlSummary:
     return self.get_executions().values()
 
   def __valid_line(self, line):
-    return re.match("\d{8} \d\d:\d\d:\d\d", line) is not None
+    return re.match("\d{8}\s\d\d:\d\d:\d\d", line) is not None
 
   def get_executions(self):
     executions = self.raw_executions
@@ -277,9 +277,9 @@ class CollectlSummary:
 
   @staticmethod
   def parse_line(line):
-    """
+    r"""
     
-    >>> parts = CollectlSummary.parse_line("20110818 00:02:00 22733 31062 20 22686 0 S 12620 0 1756 344 88 672 1940 2 0.00 0.00 0 0:00.00 0 0 0 0 0 0 0 0 0 /opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC")
+    >>> parts = CollectlSummary.parse_line('20110818\t00:02:00\t22733\t31062\t20\t22686\t0\tS\t12620\t0\t1756\t344\t88\t672\t1940\t2\t0.00\t0.00\t0\t0:00.00\t0\t0\t0\t0\t0\t0\t0\t0\t0\t/opt/bin/bash -l /var/spool/torque/mom_priv/jobs/124731.node1081.localdomain.SC')
     >>> to_postgres_date(parts[0])
     '2011-08-18 00:02:00'
     >>> parts[1].strip()
@@ -288,19 +288,29 @@ class CollectlSummary:
     '31062'
     >>> parts[3].strip()
     '/opt/bin/bash'
-    >>> parts = CollectlSummary.parse_line("20110925 16:01:00 10951 11257 20 7456 0 R 615788 100532 507020 536368 5468 2356 4180 1 1.16 58.05 98   1165:21 0 0 0 0 0 0 0 0 13K ./mpcugles              ")
+    >>> parts = CollectlSummary.parse_line('20110925\t16:01:00\t10951\t11257\t20\t7456\t0\tR\t615788\t100532\t507020\t536368\t5468\t2356\t4180\t1\t1.16\t58.05\t98\t\t\t1165:21\t0\t0\t0\t0\t0\t0\t0\t0\t13K\t./mpcugles              ')
     >>> parts[3].strip()
     './mpcugles'
-    """    
-    
-    
-    first_line_parts = line.split(' ', 19)
+    >>> parts = CollectlSummary.parse_line('20110925\t16:01:00\t10951\t11257\t20\t7456\t0\tR\t615788\t100532\t507020\t536368\t5468\t2356\t4180\t1\t1.16\t58.05\t98\t\t\t1165:21\t0\t0\t0\t0\t0\t0\t0\t0\t13K\tmpcugles\t./mpcugles              ')
+    >>> parts[3].strip()
+    './mpcugles'
+    >>> parts = CollectlSummary.parse_line('20110925\t16:01:00\t10951\t11257\t20\t7456\t0\tR\t615788\t100532\t507020\t536368\t5468\t2356\t4180\t1\t1.16\t58.05\t98\t\t\t1165:21\t0\t0\t0\t0\t0\t0\t0\t0\t13K\t/opt/mpi/mpcugles\t./mpcugles              ')
+    >>> parts[3].strip()
+    '/opt/mpi/mpcugles'
+    """   
+
+    first_line_parts = line.split("\t", 19)
+    if len(first_line_parts) != 20:
+      raise AssertionError("Failed to parse line [%s]" % line)
     time_str = "%s %s" % (first_line_parts[0], first_line_parts[1]) 
     rest_line = first_line_parts[19]
     rest_line = rest_line.strip()
-    rest_line_parts = rest_line.split(' ', 10)
-    #print "rest_line is [%s]" % rest_line
-    return (CollectlSummary.parse_timestamp(time_str), first_line_parts[2], first_line_parts[3], CollectlSummary.parse_program(rest_line_parts[10]))
+    rest_line_parts = rest_line.split("\t", 10)
+    timestamp = CollectlSummary.parse_timestamp(time_str)
+    pid = first_line_parts[2]
+    uid = first_line_parts[3]
+    executable = CollectlSummary.parse_program(rest_line_parts[10])
+    return (timestamp, pid, uid, executable)
 
   @staticmethod
   def parse_timestamp(date_str):
@@ -313,8 +323,29 @@ class CollectlSummary:
 
     
   @staticmethod
-  def parse_program(command_line):
-    return command_line.split(None, 1)[0]
+  def parse_program(end_of_collectl_output):
+    if end_of_collectl_output.find("\t") != -1:
+      # Have an executable and command line string
+      (executable, command_line) = end_of_collectl_output.split("\t", 1)
+      executable_from_executable_column = executable
+      executable_from_command_line = CollectlSummary.parse_program_from_command_line(command_line)
+      if CollectlSummary.is_path_to_executable(executable_from_command_line) and not CollectlSummary.is_path_to_executable(executable_from_executable_column):
+        return executable_from_command_line
+      else:
+        return executable_from_executable_column
+    else:
+      # Only have a command line string, just take the first part of it
+      return CollectlSummary.parse_program_from_command_line(end_of_collectl_output)
+
+  @staticmethod
+  def is_path_to_executable(executable):
+    return executable.find("/") != -1
+
+  @staticmethod
+  def parse_program_from_command_line(end_of_collectl_output):
+    return end_of_collectl_output.split(None, 1)[0]
+
+
 
 class CollectlSummaryFactory:
   
@@ -474,7 +505,7 @@ class CollectlExecutionMerger:
   In an effort to reduce records produced, merge executions that only occur at one timestamp and have the same executable and uid. 
 
   >>> def get_count(executions): merger = CollectlExecutionMerger(); merger.merge(executions); return len(merger.get_merged_executions())
-  >>> def test_time(): return CollectlSummary.parse_timestamp('20110818 00:02:00')
+  >>> def test_time(str_time = '20110818 00:02:00'): return CollectlSummary.parse_timestamp(str_time)
   >>> get_count([[test_time(), CollectlSummary.parse_timestamp('20110818 00:03:00'), 3, 1, 'g09' ]])
   1
   >>> get_count([[test_time(), test_time(), 3, 1, 'g09'],[test_time(), test_time(), 4, 1, 'g09x']] )
@@ -487,38 +518,75 @@ class CollectlExecutionMerger:
   1
   >>> get_count([[test_time(), test_time(), 3, 1, '/bin/ls'],[test_time(), test_time(), 4, 1, '/bin/ls']] )
   2
+  >>> get_count([[test_time('20110818 00:04:00'), test_time('20110818 00:04:00'), 3, 1, 'g09'],[test_time(), test_time(), 4, 1, 'g09']] )
+  1
   """
 
   def __init__(self):
     self.merged_executions = []
   
   def merge(self, executions):
+    execution_clusters = []
     for execution in executions:
-      start = execution[0]
-      end = execution[1]
-      is_single_observation = start == end
-      if not is_single_observation:
+      if not self.mergeable_execution(execution):
         self.__append_execution(execution)
       else:
-        self.__merge_single_execution(execution)
+        execution_clusters.append(execution)
+    for execution in self.__merge_execution_clusters(execution_clusters):
+      self.__append_execution(execution)       
+
+  def mergeable_execution(self, execution):
+    return (execution[0] == execution[1]) and merge_executable(execution[4])
 
   def __append_execution(self, execution):
     self.merged_executions.append(execution)
-    
-  def __merge_single_execution(self, execution):
-    start = execution[0]
-    uid = execution[3]
-    found_match = False
-    for merged_execution in self.merged_executions:
-      merged_start = merged_execution[0]
-      merged_end = merged_execution[1]
-      merged_uid = merged_execution[3]
-      merged_executable = merged_execution[4]
-      if start == merged_start and start == merged_end and uid == merged_uid and execution[4] == merged_executable and merge_executable(merged_executable):
-        found_match = True
+
+  def __merge_execution_clusters(self, execution_clusters):
+    while True:
+      iteration_execution_clusters = []
+      for execution in execution_clusters:
+        match = None
+        for iteration_execution in iteration_execution_clusters:
+          if self.__can_merge(execution, iteration_execution):
+            match = iteration_execution
+            break
+        if match is not None:
+          iteration_execution_clusters.remove(match)
+          new_execution = self.__merge(execution, match)
+          iteration_execution_clusters.append(new_execution)
+        else:
+          iteration_execution_clusters.append(execution)
+      if len(iteration_execution_clusters) == len(execution_clusters):
         break
-    if not found_match:
-      self.__append_execution(execution)
+      else:
+        execution_clusters = iteration_execution_clusters
+    return execution_clusters
+
+  def __can_merge(self, execution1, execution2):
+    uid1 = execution1[3]
+    uid2 = execution2[3]
+    executable1 = execution1[4]
+    executable2 = execution2[4]
+    if not (uid1 == uid2 and executable1 == executable2):
+      return False
+    start1 = datetime(*execution1[0][0:6])
+    start2 = datetime(*execution2[0][0:6])
+    end1 = datetime(*execution1[1][0:6])
+    end2 = datetime(*execution2[1][0:6])
+
+    five_minutes = timedelta(minutes=5)
+    
+    merge_before =  abs(start1 - end2) < five_minutes 
+    merge_after = abs(start2 - end1) < five_minutes
+    merge_contained = (start1 >= start2 and end1 <= end2) or (start2 >= start1 and end2 <= end1)
+    return merge_before or merge_after or merge_contained
+  
+  def __merge(self, execution1, execution2):
+    min_start = min(execution1[0], execution2[0])
+    max_end = max(execution1[1], execution2[1])
+    execution1[0] = min_start
+    execution1[1] = max_end
+    return execution1
     
   def get_merged_executions(self):
     return self.merged_executions
