@@ -9,7 +9,7 @@ import time
 import threading
 import Queue
 
-# ~/parse_collectl.py  --directory /project/collectl/itasca --host_prefix itasca --log_directory /home/it1/chilton/logs --batch_size 100
+# parse_collectl.py  --directory /project/collectl --hosts itasca,koronis,elmo,calhoun --num_threads 4
 
 # regexp to match executables we don't care about and which shouldn't be recorded (mostly system tools). 
 BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*|.*/modulecmd|tee|gzip|tar|vi|make|/usr/bin/sh|less|/usr/bin/make|mv|pico|vim|scp|tail|sed|top|rsh|head|rsync|wc|awk|man|find)$"
@@ -599,10 +599,11 @@ class CollectlFileScanner:
   """
 
   def __stderr_file(self, log_file_path_prefix):
-    return os.path.join(os.path.join(self.options.log_directory, self.options.host_prefix), log_file_path_prefix + "-stderr")
+    return os.path.join(os.path.join(self.options.log_directory, self.host), log_file_path_prefix + "-stderr")
 
-  def __init__(self, options, node_name, rawp_file, relative_file_path, log_recorder):
+  def __init__(self, options, host, node_name, rawp_file, relative_file_path, log_recorder):
     self.options = options
+    self.host = host
     self.node_name = node_name
     self.rawp_file = rawp_file
     stderr_path = None
@@ -635,11 +636,12 @@ class CollectlFileScanner:
 
 class FileLogRecorder:
 
-  def __init__(self, options):
+  def __init__(self, options, host):
     self.options = options
+    self.host = host
 
   def __log_file_base(self, dir_file):
-    return os.path.join(os.path.join(self.options.log_directory, self.options.host_prefix), dir_file)
+    return os.path.join(os.path.join(self.options.log_directory, self.host), dir_file)
     
   def previously_recorded(self, filename):
     return os.path.exists(self.__parsing_completed_file(self.__log_file_base(filename)))
@@ -665,12 +667,13 @@ class FileLogRecorder:
 
 
 class DbLogRecorder:
-  def __init__(self, options):
+  def __init__(self, options, host):
     self.options = options
+    self.host = host
     self.connection = PostgresConnectionFactory(options).get_database_connection()
 
   def previously_recorded(self, filename):
-    full_path = os.path.join(self.options.directory, filename)
+    full_path = os.path.join(os.path.join(self.options.directory, self.host), filename)
     cursor = self.connection.cursor()
     cursor.execute("select 1 from PROCESSED_COLLECTL_LOGS where NAME = %s", (full_path,))
     found_row = cursor.fetchone() is not None
@@ -685,11 +688,11 @@ class DbLogRecorder:
 
 class LogRecorder:
 
-  def __init__(self, options):
+  def __init__(self, options, host):
     if options.use_db():
-      self.delegate = DbLogRecorder(options)
+      self.delegate = DbLogRecorder(options, host)
     else:
-      self.delegate = FileLogRecorder(options)
+      self.delegate = FileLogRecorder(options, host)
 
   def previously_recorded(self, filename):
     return self.delegate.previously_recorded(filename)
@@ -703,7 +706,9 @@ class LogRecorder:
 class CollectlDirectoryScanner:
   """
   >>> import tempfile, shutil, os
-  >>> temp_date_dir = tempfile.mkdtemp()
+  >>> temp_date_dir_base = tempfile.mkdtemp()
+  >>> temp_date_dir = os.path.join(temp_date_dir_base, "itasca")
+  >>> os.mkdir(temp_date_dir)
   >>> temp_log_dir = tempfile.mkdtemp()
   >>> open(temp_date_dir + "/node0506-20110819-000100.rawp.gz", 'w').close()
   >>> open(temp_date_dir + "/node0506-20110819-000100.raw.gz", 'w').close()
@@ -711,9 +716,9 @@ class CollectlDirectoryScanner:
   >>> open(temp_date_dir + "/node0507-20110819-000100.raw.gz", 'w').close()
   >>> itasca_log_dir = os.path.join(temp_log_dir, "itasca")
   >>> os.makedirs(itasca_log_dir)
-  >>> options = TestCollectlParseOptions(date='20110819', directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout', collectl_path=None)
+  >>> options = TestCollectlParseOptions(date='20110819', directory=temp_date_dir_base, log_directory=temp_log_dir, batch_size=None, output_type='stdout', collectl_path=None)
   >>> open(os.path.join(itasca_log_dir, "node0507-20110819-000100.rawp.gz-parsing-completed"), 'w').close() # Mark file as previously processed
-  >>> dated_dir_scanner = CollectlDirectoryScanner(options)
+  >>> dated_dir_scanner = CollectlDirectoryScanner(options, "itasca")
   >>> nodes = dated_dir_scanner.get_node_scanners()
   >>> file_scanner = nodes.next()
   >>> file_scanner.node_name
@@ -724,19 +729,21 @@ class CollectlDirectoryScanner:
   StopIteration
   >>> open(temp_date_dir + "/node0506-20110820-000100.rawp.gz", 'w').close()
   >>> open(temp_date_dir + "/node0506-20110820-000100.raw.gz", 'w').close()
-  >>> options =  TestCollectlParseOptions(date=None, directory=temp_date_dir, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout',collectl_path=None)
-  >>> undated_dir_scanner = CollectlDirectoryScanner(options)
+  >>> options =  TestCollectlParseOptions(date=None, directory=temp_date_dir_base, host_prefix='itasca', log_directory=temp_log_dir, batch_size=None, output_type='stdout',collectl_path=None)
+  >>> undated_dir_scanner = CollectlDirectoryScanner(options, "itasca")
   >>> nodes = undated_dir_scanner.get_node_scanners()
   >>> files = [os.path.basename(nodes.next().rawp_file), os.path.basename(nodes.next().rawp_file)]
   >>> files.sort()
   >>> files
   ['node0506-20110819-000100.rawp.gz', 'node0506-20110820-000100.rawp.gz']
-  >>> shutil.rmtree(temp_date_dir)
+  >>> shutil.rmtree(temp_date_dir_base)
   >>> shutil.rmtree(temp_log_dir)
   """
 
   def get_node_scanners(self):
-    potential_files = [dir_file for dir_file in os.listdir(self.directory)]
+    potential_files = []
+    if os.path.isdir(self.directory):
+      potential_files.extend([dir_file for dir_file in os.listdir(self.directory)])
     while len(potential_files) > 0 and (self.batch_size == None or self.batch_count < self.batch_size):
       dir_file = potential_files.pop()
       if os.path.isdir(os.path.join(self.directory, dir_file)):
@@ -789,15 +796,15 @@ class CollectlDirectoryScanner:
     return "%s%s" % (self.host_prefix, os.path.basename(rawp_file).split("-")[0])
 
   def __build_file_parser(self, rawp_file):
-    return CollectlFileScanner(self.options, self.__node_name(rawp_file), os.path.join(self.directory, rawp_file), rawp_file, self.log_recorder)
+    return CollectlFileScanner(self.options, self.host_prefix, self.__node_name(rawp_file), os.path.join(self.directory, rawp_file), rawp_file, self.log_recorder)
     
-  def __init__(self, options):
+  def __init__(self, options, host):
     self.options = options
     self.date = options.date
-    self.directory = options.directory
-    self.host_prefix = options.host_prefix
+    self.directory = os.path.join(options.directory, host)
+    self.host_prefix = host
     self.batch_size = options.batch_size
-    self.log_recorder = LogRecorder(options)
+    self.log_recorder = LogRecorder(options, host)
     self.batch_count = 0
   
 def has_text(input):
@@ -839,7 +846,8 @@ class CollectlParseOptions(BaseCollectlParseOptions):
     from optparse import OptionParser
     parser = OptionParser()
     parser.add_option("--date", dest="date", help="Date in format YYYYMMDD")
-    parser.add_option("--host_prefix", dest="host_prefix", help="Host name prefix (e.g. itasca)")
+    #parser.add_option("--host_prefix", dest="host_prefix", help="Host name prefix (e.g. itasca)")
+    parser.add_option("--hosts", dest="hosts", help="A comma-separated list of subdirectories to search beneath specified directory (e.g. itasca,calhoun,koronis,elmo)")
     parser.add_option("--directory", dest="directory", help="Directory to scan for collectl files")
     parser.add_option("--batch_size", dest="batch_size", help="Maximum number of files to parse.", type="int", default = None)
     parser.add_option("--output_type", dest="output_type", help="Output type (e.g. postgres, stdout).", default="postgres", choices=["stdout", "postgres"])
@@ -858,7 +866,6 @@ class CollectlParseOptions(BaseCollectlParseOptions):
 
     (options, args) = parser.parse_args()
     self.date = options.date
-    self.host_prefix = options.host_prefix
     self.directory = options.directory
     self.log_directory = options.log_directory
     self.batch_size = options.batch_size
@@ -869,10 +876,14 @@ class CollectlParseOptions(BaseCollectlParseOptions):
     self.collectl_path = options.collectl_path
     
 
-    if not has_text(self.host_prefix):
-      parser.error("Argument host_prefix not specified.")
+    if not has_text(options.hosts):
+      parser.error("Argument hosts not specified.")
+    self.hosts = options.hosts.split(",")
+
     if not has_text(self.directory):
       parser.error("Directory to scan not specified.")
+    if not os.path.isdir(self.directory):
+      parser.error("Invalid directory specified - %s does not appear to be directory." % self.directory)
     if self.output_type == "postgres":
       self.pg_database = self.__get_database_option(parser, "pg_database")
       self.pg_username = self.__get_database_option(parser, "pg_username")
@@ -885,7 +896,8 @@ def main():
   if options.check_database_connection:
     PostgresCollectlSqlDumper(options)
   if options.scan:
-    CollectlDirectoryScanner(options).execute()
+    for host in options.hosts:
+      CollectlDirectoryScanner(options, host).execute()
 
 if __name__ == "__main__":
   main()
