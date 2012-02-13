@@ -12,7 +12,7 @@ import Queue
 # parse_collectl.py  --directory /project/collectl --hosts itasca,koronis,elmo,calhoun --num_threads 4
 
 # regexp to match executables we don't care about and which shouldn't be recorded (mostly system tools). 
-BLACKLIST = "^(sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*|.*/modulecmd|tee|gzip|tar|vi|make|/usr/bin/sh|less|/usr/bin/make|mv|pico|vim|scp|tail|sed|top|rsh|head|rsync|wc|awk|man|find)$"
+BLACKLIST = "^(sshd|sshd:|/bin/.*|python|sh|perl|-?bash|cat|csh|.*/a.out|a.out|/usr/bin/ssh|ssh|/usr/bin/time|xargs|orted|mpirun|cp|pbs_demux|/opt/torque/.*|/opt/platform_mpi/.*|rm|.*workerbee.*|/usr/bin/python|touch|env|date|/usr/bin/perl|sleep|grep|/opt/openmpi/.*|.*/modulecmd|tee|gzip|tar|vi|make|/usr/bin/sh|less|/usr/bin/make|mv|pico|vim|scp|tail|sed|top|rsh|head|rsync|wc|awk|man|find)$"
 MERGE_LIST = "^(.*g09.*|l\d+\.exel?)$"
 
 def merge_executable(executable):
